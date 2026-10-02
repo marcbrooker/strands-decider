@@ -462,3 +462,72 @@ def test_multistep_eval_lines_parse_back_whatever_the_name_length(tmp_path, monk
         f"eval: {long_name}": {"accuracy": 0.667, "n": 3},
         "eval: hotpotqa (held out)": {"accuracy": 1.0, "n": 2},
     }
+
+
+def test_a_gemma_checkpoint_is_described_as_gemma(tmp_path):
+    """The card, LICENSE.md and provenance.json name the checkpoint's own base and teacher."""
+    ckpt = tmp_path / "ckpt"
+    _ckpt(str(ckpt))
+    cfg = json.load(open(ckpt / "hobson_config.json"))
+    cfg["base_model"] = hf_export.GEMMA4_E2B.model
+    json.dump(cfg, open(ckpt / "hobson_config.json", "w"), indent=2)
+    with pytest.raises(SystemExit, match="--example"):
+        _export(tmp_path, ckpt, tmp_path / "no-example")
+    stage = tmp_path / "stage"
+    import shutil
+
+    shutil.rmtree(stage, ignore_errors=True)
+    os.makedirs(stage)
+    hf_export.build(str(ckpt), str(stage), str(tmp_path / "run"), None, [], [], "n", "r", "final",
+                    hub_id="org/decider-e2b", example="Output of this checkpoint:\n\n```\nx\n```\n")
+    out = tmp_path / "out"
+    hf_export.publish(str(stage), str(out))
+    readme, licence = (out / "README.md").read_text(), (out / "LICENSE.md").read_text()
+    prov = json.load(open(out / "provenance.json"))
+    from huggingface_hub import metadata_load
+
+    meta = metadata_load(str(out / "README.md"))
+    assert meta["base_model"] == "google/gemma-4-E2B-it" and "gemma4" in meta["tags"]
+    assert "qwen3.5" not in meta["tags"]
+    assert prov["base_model"] == "google/gemma-4-E2B-it"
+    assert prov["base_model_revision"] == hf_export.GEMMA4_E2B.revision
+    for text in (readme, licence):
+        assert "google/gemma-4-31B-it" in text and "Qwen" not in text
+    assert "Gemma4ForConditionalGeneration" in readme and "v19 reference" not in readme
+    assert "Output of this checkpoint:\n\n```\nx\n```\n\nOr serve it" in readme
+    hf_export.verify(str(out))
+
+
+def _external(root, kind):
+    os.makedirs(root)
+    if kind == "td":
+        s = {"all": {"decisions": 2000, "accuracy": 0.669, "kl_from_gold": 0.262, "brier": 0.131,
+                     "ece10": 0.05}}
+    else:
+        s = {"records": 300, "correct": 172, "pair_joint_accuracy": 0.4,
+             "semantic_consistency": 0.66}
+    json.dump(s, open(os.path.join(root, "summary.json"), "w"))
+
+
+def test_external_benchmarks_are_tabled_and_copied(tmp_path):
+    ckpt = tmp_path / "ckpt"
+    _ckpt(str(ckpt))
+    _external(str(tmp_path / "td"), "td")
+    _external(str(tmp_path / "jf"), "jf")
+    run = tmp_path / "run"
+    _run(str(run))
+    stage = tmp_path / "stage"
+    os.makedirs(stage)
+    summary = hf_export.build(str(ckpt), str(stage), str(run), None, [], [], "n", "r", "final",
+                              extra_evals=[str(tmp_path / "jf"), str(tmp_path / "td")])
+    readme = (stage / "README.md").read_text()
+    assert "| JF100 (100 items x 3 rotations) | 172/300 |" in readme
+    assert "| Typed Decisions (test, zero-shot) | 0.669 | KL from gold 0.262, Brier 0.131 |" in readme
+    assert (stage / "eval" / "jf100" / "summary.json").exists()
+    assert (stage / "eval" / "typed-decisions" / "summary.json").exists()
+    assert [e["key"] for e in summary["external"]] == ["jf100", "typed-decisions"]
+    bad = tmp_path / "bad"
+    os.makedirs(bad)
+    json.dump({"x": 1}, open(bad / "summary.json", "w"))
+    with pytest.raises(SystemExit, match="neither"):
+        hf_export.external_eval(str(bad))
