@@ -295,6 +295,19 @@ class StrandsDeciderModel(nn.Module):
                 config.base_model, config=base_cfg.get_text_config(), **kwargs
             )
             torso = lm.model
+        elif base_cfg.model_type == "gemma4":
+            # Gemma 4 checkpoints are multimodal too, but the Qwen trick does not carry
+            # over: Gemma4ForCausalLM does not map the checkpoint's `model.language_model.*`
+            # names and leaves every text weight randomly initialised, with only a
+            # missing-keys warning. Load the whole model, whose class maps them, keep the
+            # text decoder, and let the vision and audio encoders (0.47B) go.
+            import transformers
+
+            full = transformers.Gemma4ForConditionalGeneration.from_pretrained(
+                config.base_model, **kwargs
+            )
+            torso = full.model.language_model
+            del full
         else:
             torso = AutoModel.from_pretrained(config.base_model, **kwargs)
         torso.config.use_cache = True
@@ -426,6 +439,12 @@ class StrandsDeciderModel(nn.Module):
             pooled = pool_last_token(hidden, attention_mask).to(torch.float32)
             rows = table[[slots[k] for k in sorted(slots)]].to(torch.float32)
             logits = pooled @ rows.t()
+            # The LM's own final transform, where it has one: Gemma soft-caps its logits
+            # at 30. Without it the read distribution is not the model's (options 1-3:
+            # 0.37 / 0.50 / 0.14 raw against the model's 0.36 / 0.40 / 0.24).
+            cap = getattr(getattr(self.torso, "config", None), "final_logit_softcapping", None)
+            if cap:
+                logits = cap * torch.tanh(logits / cap)
             pad = self.config.num_slots - logits.size(-1)
             if pad > 0:
                 logits = F.pad(logits, (0, pad), value=MASK_VALUE)
