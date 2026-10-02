@@ -135,7 +135,7 @@ def label(model: Any, tok: Any, examples: Sequence[Example], *, max_batch_tokens
     # The LM's own final transform, where it has one: Gemma soft-caps its logits at 30.
     # Without it the letters' distribution is not the model's (as for the frozen readout,
     # modeling.frozen_slot_log_probs).
-    cfg = model.config
+    cfg: Any = getattr(model, "config", None)
     text_cfg = cfg.get_text_config() if hasattr(cfg, "get_text_config") else cfg
     cap = getattr(text_cfg, "final_logit_softcapping", None)
     rows: list[tuple[int, list[int], list[int]]] = []  # (example index, token ids, order)
