@@ -19,6 +19,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
@@ -88,6 +89,11 @@ class StrandsDeciderConfig:
     # and without it the frozen -it torso reads JevBench at chance (73/231, against 135
     # with it). Off by default, so earlier checkpoints load and retrain unchanged.
     force_bos: bool = False
+    # Keep a torso's per-layer embedding table in host memory (HostEmbedding). Gemma 4
+    # E2B's is 262,144 x 8,960 (2.35B parameters, 4.4 GiB in bf16), read by token lookup
+    # only and never trained, so moving it off the GPU frees that memory at no measured
+    # cost in speed. Off by default; a torso without such a table ignores it.
+    host_embeddings: bool = False
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), indent=2)
@@ -96,6 +102,48 @@ class StrandsDeciderConfig:
     def from_json(cls, path: str) -> StrandsDeciderConfig:
         with open(path, encoding="utf-8") as fh:
             return cls(**json.load(fh))
+
+
+class HostEmbedding(nn.Module):
+    """A frozen embedding table kept in host memory whatever device the model moves to.
+
+    Token ids go to the CPU for the lookup and the rows come back to the ids' device.
+    `.to(device)` / `.cuda()` leave the table where it is; a dtype cast (`.float()` for
+    CPU serving) is applied, on the CPU. The wrapped module's own forward runs, so any
+    scaling it applies (Gemma's scaled embeddings) is kept. Never trained.
+    """
+
+    def __init__(self, inner: nn.Embedding):
+        super().__init__()
+        self.inner: nn.Embedding = inner.to("cpu").requires_grad_(False)
+        self._pin()
+
+    def _pin(self) -> None:
+        if torch.cuda.is_available() and not self.inner.weight.is_pinned():
+            self.inner.weight.data = self.inner.weight.data.pin_memory()
+
+    def _apply(
+        self, fn: Callable[[torch.Tensor], torch.Tensor], recurse: bool = True
+    ) -> HostEmbedding:
+        # Probe the conversion on an empty tensor: keep any dtype change, drop the move.
+        w = self.inner.weight
+        target = fn(torch.empty(0, dtype=w.dtype))
+        if target.dtype != w.dtype:
+            w.data = w.data.to(target.dtype)
+            self._pin()
+        return self
+
+    @property
+    def weight(self) -> torch.Tensor:
+        return self.inner.weight
+
+    def forward(self, input_ids: torch.Tensor) -> torch.Tensor:
+        rows: torch.Tensor = self.inner(input_ids.to("cpu"))
+        if input_ids.device.type == "cpu":
+            return rows
+        if torch.cuda.is_available():
+            rows = rows.pin_memory()
+        return rows.to(input_ids.device, non_blocking=True)
 
 
 def ensure_bos(tok: Any) -> Any:
@@ -342,6 +390,10 @@ class StrandsDeciderModel(nn.Module):
             del full
         else:
             torso = AutoModel.from_pretrained(config.base_model, **kwargs)
+        if config.host_embeddings:
+            table = getattr(torso, "embed_tokens_per_layer", None)
+            if table is not None:
+                torso.embed_tokens_per_layer = HostEmbedding(table)
         torso.config.use_cache = True
         return torso
 

@@ -57,6 +57,9 @@ class TrainConfig:
     # Start every prompt with BOS even if the tokenizer adds none (modeling.ensure_bos);
     # gemma-4-E2B-it's tokenizer leaves it to the chat template.
     force_bos: bool = False
+    # Keep a per-layer embedding table (Gemma 4 E2B's, 4.4 GiB) in host memory
+    # (modeling.HostEmbedding). For one GPU: under torchrun every rank would hold a copy.
+    host_embeddings: bool = False
     freeze_torso: bool = False
     # "lm_head" seeds the slot head from the LM's own option-number readout rather
     # than at random. Measured teacher quality for that readout on JevBench is
@@ -287,6 +290,7 @@ def train(cfg: TrainConfig) -> str:
         lora_r=cfg.lora_r,
         lora_alpha=cfg.lora_alpha,
         force_bos=cfg.force_bos,
+        host_embeddings=cfg.host_embeddings,
         # Serving needs this to correct the variance floor smoothing imposes on
         # score confidence; without it a score could never reach high confidence.
         ordinal_smoothing=cfg.ordinal_smoothing,

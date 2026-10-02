@@ -1,5 +1,6 @@
 """Gemma 4 as a torso, on tiny random-weight Gemma 4 text models (no download):
 
+- HostEmbedding keeps a table on the CPU through model moves, and looks up the same rows;
 - the frozen option-number readout applies Gemma's final logit soft-cap, so it matches
   the model's own output head;
 - the shared-prefix cache forks sliding-window layers (a prefix longer than the window)
@@ -17,7 +18,11 @@ if not hasattr(transformers, "Gemma4TextConfig"):
     pytest.skip("this transformers has no Gemma 4", allow_module_level=True)
 
 from strands_decider.infer import _expand_cache  # noqa: E402
-from strands_decider.modeling import StrandsDeciderConfig, StrandsDeciderModel  # noqa: E402
+from strands_decider.modeling import (  # noqa: E402
+    HostEmbedding,
+    StrandsDeciderConfig,
+    StrandsDeciderModel,
+)
 
 DEV = "cuda" if torch.cuda.is_available() else "cpu"
 LAYERS = ["sliding_attention", "sliding_attention", "full_attention", "sliding_attention"]
@@ -51,6 +56,21 @@ class _Digits:
 
     def encode(self, text, add_special_tokens=False):
         return [10 + int(text)] if text.isdigit() and len(text) == 1 else [1, 2]
+
+
+def test_host_embedding_stays_on_cpu_and_matches():
+    table = _lm().model.embed_tokens_per_layer
+    ids = torch.tensor([[3, 7, 9, 2]])
+    want = table(ids)
+    host = HostEmbedding(table)
+    model = torch.nn.Sequential(host)
+    model.to(DEV)
+    assert host.inner.weight.device.type == "cpu"
+    got = host(ids.to(DEV))
+    assert got.device.type == DEV and torch.equal(got.cpu(), want)
+    model.to(torch.float64)  # a dtype cast is applied, still on the CPU
+    assert host.inner.weight.dtype == torch.float64 and host.inner.weight.device.type == "cpu"
+    assert StrandsDeciderConfig().host_embeddings is False
 
 
 def test_frozen_readout_applies_softcap():
