@@ -103,11 +103,17 @@ and `checkpoints/` are links to the NVMe scratch, and `data/synthetic/` is extra
 the link.
 
 `setup-host.sh` builds the reference environment of [training/README.md, Setup](../README.md#setup) in
-`/opt/hobson/venv`: Python 3.12, torch 2.7.1 (cu126), transformers 5.17.0, peft 0.21.0,
+`/opt/hobson/venv`: Python 3.12, torch 2.7.1 (cu126; cu128 on Blackwell GPUs such as the
+G7e's RTX PRO 6000, which the cu126 build has no kernels for), transformers 5.17.0, peft 0.21.0,
 flash-linear-attention, and `pip install -e ".[dev,train]"` (the `train` extra installs
 `datasets`, which the corpus build needs). `causal_conv1d` is not installed, as in that
 environment. It puts the NVMe instance store at `/opt/hobson/scratch` (Hugging Face cache,
-`data/`, `checkpoints/`) and downloads both Qwen3.5 models. About a minute on a p5.
+`data/`, `checkpoints/`) and downloads both Qwen3.5 models. About a minute on a p5. Name
+models after the code name to download those instead, e.g. for g4
+(`configs/experiments/g4.yaml`) `setup-host.sh hobson google/gemma-4-E2B-it`; `verify-host.sh`
+then downloads `Qwen/Qwen3.5-2B-Base` for its smoke test. It also disables the automatic apt
+upgrades: `apt-daily-upgrade` once re-executed systemd mid-run and restarted the `hobson-bg`
+unit from the start.
 
 `verify-host.sh` prints the GPUs and versions, runs a forward and backward pass of
 Qwen3.5-2B-Base on the fla kernels, fails if the Gated DeltaNet layers fell back to

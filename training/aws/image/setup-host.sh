@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # Idempotent host setup for the hobson v17 host (Ubuntu 24.04 DLAMI, run as root).
-#   setup-host.sh [code-name]      (default code-name: aws-infra)
+#   setup-host.sh [code-name] [model ...]   (default code-name: aws-infra)
+# Models to pre-download: by default Qwen/Qwen3.5-2B-Base and the pinned Qwen3.5-4B
+# teacher; name others to download those instead (g4: google/gemma-4-E2B-it).
+# verify-host.sh downloads Qwen/Qwen3.5-2B-Base for its smoke test if it is not cached.
+# Blackwell GPUs (compute capability 10+, e.g. G7e) get torch 2.7.1's cu128 build: the
+# cu126 build has no kernels for them.
 # From your machine: training/aws/scripts/ssm-run.sh -t 1800 -f training/aws/image/setup-host.sh <code-name>
 # Expects s3://$HOBSON_BUCKET/code/<code-name>.tgz (training/aws/scripts/sync-code.sh --upload-only).
 # HOBSON_BUCKET must be set (ssm-run.sh exports it); HOBSON_BUCKET_REGION defaults to us-west-2.
@@ -10,6 +15,8 @@
 # causal_conv1d is NOT installed, same as that reference environment.
 set -euo pipefail
 CODE_NAME="${1:-aws-infra}"
+shift || true
+MODELS=("$@")
 BUCKET="${HOBSON_BUCKET:?set HOBSON_BUCKET (training/aws/scripts/ssm-run.sh exports it)}"
 BUCKET_REGION="${HOBSON_BUCKET_REGION:-us-west-2}"
 H=/opt/hobson
@@ -23,6 +30,9 @@ for p in tmux git jq build-essential python3.12-venv python3.12-dev pigz; do
   dpkg -s "$p" >/dev/null 2>&1 || need+=("$p")
 done
 if (( ${#need[@]} )); then apt-get update -qq && apt-get install -y -qq "${need[@]}"; fi
+# No automatic upgrades on a training host: apt-daily-upgrade once re-executed systemd 47
+# minutes into a run, which stopped and restarted the hobson-bg unit from scratch.
+systemctl disable --now apt-daily.timer apt-daily-upgrade.timer unattended-upgrades.service >/dev/null 2>&1 || true
 command -v aws >/dev/null || { apt-get install -y -qq unzip; curl -sSL https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o /tmp/awscli.zip && unzip -qo /tmp/awscli.zip -d /tmp && /tmp/aws/install; }
 
 step "scratch on NVMe instance store"
@@ -121,9 +131,11 @@ export UV_CACHE_DIR=$H/scratch/uv-cache UV_LINK_MODE=copy
 PY=$H/venv/bin/python
 echo "torch==2.7.1" > $H/constraints.txt
 
-step "torch 2.7.1 cu126"
-$PY -c 'import torch,sys; sys.exit(0 if torch.__version__.startswith("2.7.1") else 1)' 2>/dev/null || \
-  uv pip install -q --python $PY torch==2.7.1 --index-url https://download.pytorch.org/whl/cu126
+CC=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null | head -1 | cut -d. -f1)
+CU=cu126; [[ "${CC:-0}" -ge 10 ]] && CU=cu128
+step "torch 2.7.1 $CU (GPU compute capability ${CC:-unknown})"
+$PY -c "import torch,sys; sys.exit(0 if torch.__version__ == '2.7.1+$CU' else 1)" 2>/dev/null || \
+  uv pip install -q --python $PY --reinstall torch==2.7.1 --index-url https://download.pytorch.org/whl/$CU
 
 step "transformers peft fla"
 uv pip install -q --python $PY -c $H/constraints.txt \
@@ -139,10 +151,17 @@ step "pre-download models into HF_HOME"
 TEACHER_REV=$(grep -oE '"--revision", default="[0-9a-f]{40}"' "$H/code/$CODE_NAME/src/strands_decider/data/teacher.py" | grep -oE '[0-9a-f]{40}') \
   || { echo "ERROR: no pinned --revision default in src/strands_decider/data/teacher.py" >&2; exit 1; }
 # Not `download && echo`: set -e does not stop at a failed command before `&&`.
-$H/venv/bin/hf download Qwen/Qwen3.5-2B-Base --quiet >/dev/null
-echo "downloaded Qwen/Qwen3.5-2B-Base@main"
-$H/venv/bin/hf download Qwen/Qwen3.5-4B --revision "$TEACHER_REV" --quiet >/dev/null
-echo "downloaded Qwen/Qwen3.5-4B@$TEACHER_REV"
-ls $HF_HOME/hub/models--Qwen--Qwen3.5-4B/snapshots/ $HF_HOME/hub/models--Qwen--Qwen3.5-2B-Base/snapshots/
+if (( ${#MODELS[@]} )); then
+  for m in "${MODELS[@]}"; do
+    $H/venv/bin/hf download "$m" --quiet >/dev/null
+    echo "downloaded $m@main"
+  done
+else
+  $H/venv/bin/hf download Qwen/Qwen3.5-2B-Base --quiet >/dev/null
+  echo "downloaded Qwen/Qwen3.5-2B-Base@main"
+  $H/venv/bin/hf download Qwen/Qwen3.5-4B --revision "$TEACHER_REV" --quiet >/dev/null
+  echo "downloaded Qwen/Qwen3.5-4B@$TEACHER_REV"
+  ls $HF_HOME/hub/models--Qwen--Qwen3.5-4B/snapshots/ $HF_HOME/hub/models--Qwen--Qwen3.5-2B-Base/snapshots/
+fi
 du -sh $HF_HOME/hub/* 2>/dev/null || true
 step "DONE setup in $(( $(date +%s) - T0 ))s"
