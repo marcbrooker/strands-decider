@@ -499,6 +499,28 @@ def test_a_gemma_checkpoint_is_described_as_gemma(tmp_path):
     hf_export.verify(str(out))
 
 
+def test_an_e4b_checkpoint_is_described_as_e4b(tmp_path):
+    """E4B shares E2B's teacher and loader text but names its own base, revision and recipe."""
+    ckpt = tmp_path / "ckpt"
+    _ckpt(str(ckpt))
+    cfg = json.load(open(ckpt / "hobson_config.json"))
+    cfg["base_model"] = hf_export.GEMMA4_E4B.model
+    json.dump(cfg, open(ckpt / "hobson_config.json", "w"), indent=2)
+    stage = tmp_path / "stage"
+    os.makedirs(stage)
+    hf_export.build(str(ckpt), str(stage), str(tmp_path / "run"), None, [], [], "n", "r", "final",
+                    hub_id="org/decider-e4b", example="x")
+    readme = (stage / "README.md").read_text()
+    prov = json.load(open(stage / "provenance.json"))
+    assert prov["base_model"] == "google/gemma-4-E4B-it"
+    assert prov["base_model_revision"] == "ee0ef6023621cff504d758262d4e04895a5af4a2"
+    assert "configs/experiments/g4-e4b.yaml" in readme and "configs/experiments/g4.yaml" not in readme
+    assert "google/gemma-4-31B-it" in readme and "E2B" not in readme
+    # E2B's description is unchanged by the E4B entry.
+    assert hf_export.GEMMA4_E2B.model == "google/gemma-4-E2B-it"
+    assert "configs/experiments/g4.yaml" in hf_export.GEMMA4_E2B.retrain
+
+
 def _external(root, kind):
     os.makedirs(root)
     if kind == "td":

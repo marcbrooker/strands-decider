@@ -46,6 +46,7 @@ the recipe, that write every file a configuration reads (`train_files`, `teacher
 | v19-seed1 | [v19-seed1.yaml](../../configs/experiments/v19-seed1.yaml) | as v19 |
 | v20 | [v20.yaml](../../configs/experiments/v20.yaml) | the route in the header of `recipe.sh`: `training/recipe.sh build fetch multistep generated adequacy catchall distill`, then `TRAIN_CONFIG=configs/experiments/v20.yaml CKPT=checkpoints/hobson-2b-v20-retrain training/recipe.sh train calibrate eval` |
 | g4 | [g4.yaml](../../configs/experiments/g4.yaml) | `build fetch multistep generated adequacy teacher31b`; `teacher31b` merges the committed gemma-4-31B-it labels with v14's replay distributions into `data/teacher_g4.jsonl` |
+| g4-e4b (exploratory, not pre-registered) | [g4-e4b.yaml](../../configs/experiments/g4-e4b.yaml) | as g4; outcome in [research/g4-e4b.md](../g4-e4b.md) |
 
 g4 was run in the hobson-gemma4 fork, which moved the torso from Qwen3.5-2B-Base to
 Gemma 4 E2B. Its preregistration builds on that fork's g1, g2 and g3, which are not copied

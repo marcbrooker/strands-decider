@@ -139,7 +139,23 @@ per-stage timer, so `training/stages.jsonl` holds the whole run as one record. C
     released=False,
     source_ref="feat/gemma4-torso",
 )
-BASES = {b.model: b for b in (QWEN, GEMMA4_E2B)}
+GEMMA4_E4B = replace(
+    GEMMA4_E2B,
+    model="google/gemma-4-E4B-it",
+    # The one snapshot in the g4-e4b host's HF cache (2026-10-02); downloaded at Hub main.
+    revision="ee0ef6023621cff504d758262d4e04895a5af4a2",
+    revision_note="the snapshot the training host downloaded at Hub main; train did not pin it",
+    retrain="""To retrain, run `configs/experiments/g4-e4b.yaml` on one NVIDIA GPU (`research/g4-e4b.md`):
+about 4 h 40 min on one 80 GB H100, where training peaked at 24 GiB allocated and 48 GiB
+reserved. The 31B teacher's labels are committed, so no 31B model is loaded.""",
+    trained_by="""Trained by `training/recipe.sh` of the code repository (`build fetch multistep generated
+adequacy teacher31b`, then `train calibrate eval` with `configs/experiments/g4-e4b.yaml`) on
+one GPU of a `{host}` host ({gpu}): wall clock {wall} s for every stage, training stage
+{train} s. The run had no per-stage timer: `training/stages.jsonl` was rebuilt from the run
+log's stage markers and the checkpoint's file times. Configs: `train_config.json`,
+`training/configs/`.""",
+)
+BASES = {b.model: b for b in (QWEN, GEMMA4_E2B, GEMMA4_E4B)}
 # Kept for callers that named the original single base.
 BASE_MODEL, BASE_REVISION, TEACHER, TAGS = QWEN.model, QWEN.revision, QWEN.teacher, QWEN.tags
 REPO_URL = "https://github.com/strands-labs/strands-decider"
