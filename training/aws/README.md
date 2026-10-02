@@ -12,8 +12,12 @@ and output comes back through S3. Measured stage timings are in
   default profile). They must be able to create an S3 bucket, an IAM role and instance
   profile, a security group, EC2 instances, and send SSM commands.
 - `bash`, `git` and `python3` on your machine (macOS or Linux). No Session Manager plugin.
-- A default VPC in the region you launch in. The host gets a public IP for outbound
-  traffic (Hugging Face, PyPI, GitHub); its security group has no inbound rules.
+- A default VPC in the region you launch in, or the project's own: `AZS="<az> ..."
+  training/aws/scripts/ensure-vpc.sh <region>` creates one (public subnets, an internet
+  gateway, tagged with `HOBSON_NAME_TAG`) and prints its id; export it as `HOBSON_VPC`.
+  `launch-host.sh` then uses its subnets; `launch-capacity-block.sh` still needs a default
+  VPC. The host gets a public IP for outbound traffic (Hugging Face, PyPI, GitHub); its
+  security group has no inbound rules.
 - EC2 quota for the shape. `p5.48xlarge` and `g6e.48xlarge` have 192 vCPUs, so check
   *Running On-Demand P instances* (or *G and VT*) in Service Quotas is at least 192.
 

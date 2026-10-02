@@ -23,6 +23,7 @@ export HOBSON_ROLE="${HOBSON_ROLE:-hobson-v17-host}"   # IAM role and instance p
 export HOBSON_NAME_TAG="${HOBSON_NAME_TAG:-hobson-v17}"
 export HOBSON_JOB_TAG="${HOBSON_JOB_TAG:-v17-replication}"
 export HOBSON_REGIONS="${HOBSON_REGIONS:-us-west-2 us-east-1 us-east-2}"
+# HOBSON_VPC: launch into this VPC's subnets instead of the default VPC (ensure-vpc.sh).
 # State written by the launchers (instance id + region) so other scripts find the host.
 HOBSON_STATE_DIR="${HOBSON_STATE_DIR:-$_hobson_dir/.state}"
 export HOBSON_STATE_DIR
@@ -58,7 +59,7 @@ resolve_host() {
 
 ensure_sg() {  # $1 region -> prints sg id (no ingress; default all egress)
   local r="$1" vpc sg
-  vpc=$(aws ec2 describe-vpcs --region "$r" --filters Name=isDefault,Values=true --query 'Vpcs[0].VpcId' --output text)
+  vpc=${HOBSON_VPC:-$(aws ec2 describe-vpcs --region "$r" --filters Name=isDefault,Values=true --query 'Vpcs[0].VpcId' --output text)}
   sg=$(aws ec2 describe-security-groups --region "$r" --filters "Name=vpc-id,Values=$vpc" "Name=group-name,Values=hobson-v17-host" \
     --query 'SecurityGroups[0].GroupId' --output text)
   if [[ "$sg" == "None" || -z "$sg" ]]; then

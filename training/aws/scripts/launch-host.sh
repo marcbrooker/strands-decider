@@ -26,12 +26,14 @@ USERDATA=$(userdata "$SHUTDOWN_MIN")
 for r in $REGIONS; do
   ami=$(aws ssm get-parameter --region "$r" --name "$AMI_PARAM" --query Parameter.Value --output text)
   sg=$(ensure_sg "$r")
+  [[ "$sg" == sg-* ]] || die "no security group in $r (no default VPC? see ensure-vpc.sh and HOBSON_VPC)"
   log "region $r ami=$ami sg=$sg"
   for shape in $SHAPES; do
     azs=$(aws ec2 describe-instance-type-offerings --region "$r" --location-type availability-zone \
       --filters "Name=instance-type,Values=$shape" --query 'InstanceTypeOfferings[].Location' --output text | tr '\t' '\n' | sort)
     for az in $azs; do
-      subnet=$(aws ec2 describe-subnets --region "$r" --filters "Name=availability-zone,Values=$az" Name=default-for-az,Values=true \
+      if [[ -n "${HOBSON_VPC:-}" ]]; then snf="Name=vpc-id,Values=$HOBSON_VPC"; else snf=Name=default-for-az,Values=true; fi
+      subnet=$(aws ec2 describe-subnets --region "$r" --filters "Name=availability-zone,Values=$az" "$snf" \
         --query 'Subnets[0].SubnetId' --output text)
       [[ "$subnet" == "None" ]] && continue
       log "try $shape $r/$az ($subnet)"
