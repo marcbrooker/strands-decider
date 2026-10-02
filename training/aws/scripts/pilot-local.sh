@@ -6,7 +6,7 @@
 #   training/aws/scripts/pilot-local.sh
 #
 # Default trio (Gemma-4): writer gemma-4-12B-it on GPU 0, verifiers gemma-4-26B-A4B-it on GPU 1
-# and gemma-4-31B-it on GPU 2. GPU 4 is left clear (in use by another job). Override any
+# and gemma-4-31B-it on GPUs 2-3 (TP=2). GPU 4 is left clear (in use by another job). Override any
 # serve-local.sh knob through the environment.
 #
 # Knobs:

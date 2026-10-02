@@ -25,7 +25,9 @@
 # Knobs (environment; defaults for the hobson-g4 host with GPU 4 in use elsewhere):
 #   WRITER_MODEL=google/gemma-4-12B-it         WRITER_GPUS=0      WRITER_PORT=8001
 #   VERIFIER1_MODEL=google/gemma-4-26B-A4B-it  VERIFIER1_GPUS=1   VERIFIER1_PORT=8002
-#   VERIFIER2_MODEL=google/gemma-4-31B-it      VERIFIER2_GPUS=2   VERIFIER2_PORT=8003
+#   VERIFIER2_MODEL=google/gemma-4-31B-it      VERIFIER2_GPUS=2,3 VERIFIER2_PORT=8003
+#     (TP=2: on one H100 the 59 GiB of bf16 weights leave 8.6 GiB of KV cache, under the
+#      13.8 GiB one 16k-token request needs)
 #   ROUTER_PORT=4000  MAX_MODEL_LEN=16384  GPU_MEM_UTIL=0.90  DTYPE=bfloat16  QUANT=
 #   SERVE_VENV=/opt/hobson/venv-serve  (its bin/ is prepended to PATH for vllm + litellm)
 #   LOG_DIR=~/vllm-logs  HOST=127.0.0.1  (loopback only)
@@ -34,7 +36,7 @@ set -euo pipefail
 
 WRITER_MODEL="${WRITER_MODEL:-google/gemma-4-12B-it}";        WRITER_GPUS="${WRITER_GPUS:-0}";        WRITER_PORT="${WRITER_PORT:-8001}"
 VERIFIER1_MODEL="${VERIFIER1_MODEL:-google/gemma-4-26B-A4B-it}"; VERIFIER1_GPUS="${VERIFIER1_GPUS:-1}"; VERIFIER1_PORT="${VERIFIER1_PORT:-8002}"
-VERIFIER2_MODEL="${VERIFIER2_MODEL:-google/gemma-4-31B-it}";  VERIFIER2_GPUS="${VERIFIER2_GPUS:-2}";  VERIFIER2_PORT="${VERIFIER2_PORT:-8003}"
+VERIFIER2_MODEL="${VERIFIER2_MODEL:-google/gemma-4-31B-it}";  VERIFIER2_GPUS="${VERIFIER2_GPUS:-2,3}";  VERIFIER2_PORT="${VERIFIER2_PORT:-8003}"
 ROUTER_PORT="${ROUTER_PORT:-4000}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-16384}"
 GPU_MEM_UTIL="${GPU_MEM_UTIL:-0.90}"
