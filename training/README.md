@@ -143,7 +143,8 @@ as shipped, changes it by 0.44.
 
 `training/recipe.sh` builds, trains and evaluates the default, v19, end to end under WSL2; pass
 one or more step names (`build`, `fetch`, `multistep`, `generated`, `adequacy`,
-`catchall`, `teacher`, `distill`, `parent`, `replay`, `train`, `calibrate`, `eval`) to run
+`catchall`, `teacher`, `teacher31b`, `distill`, `parent`, `replay`, `train`, `calibrate`,
+`eval`) to run
 those. It trains twice: a parent on v14's recipe (`configs/train-parent.yaml`), whose
 answers on the multi-step rows become the targets for v19 (`configs/train.yaml`) — about
 11 h in all. `training/recipe_v7.sh` does the same for v7 on Windows.
@@ -169,6 +170,24 @@ multi-step sets also rebuild exactly from the downloads. The catch-all and teach
 depend on the short-task corpus ([1. Build the corpora](steps.md#1-build-the-corpora)). `eval` then
 adds v20's measures: the catch-all set, and paraphrase consistency and instruction-flip
 pairs (`evaluation/pair_eval.py`).
+
+**Training g4, a Gemma 4 E2B torso** (`configs/experiments/g4.yaml`, [PREREGISTRATION-g4.md](../research/preregistrations/PREREGISTRATION-g4.md)):
+
+```bash
+training/recipe.sh build fetch multistep generated adequacy teacher31b
+TRAIN_CONFIG=configs/experiments/g4.yaml CKPT=checkpoints/hobson-e2b-g4-retrain \
+  training/recipe.sh train calibrate eval
+```
+
+g4 trains `google/gemma-4-E2B-it` toward gemma-4-31B-it's answer distributions in place of
+the frozen-torso anchor. `teacher31b` merges the committed 31B labels with v14's replay
+distributions into `data/teacher_g4.jsonl`; `RELABEL=1` relabels with the 31B model
+instead (about 2 h on one 96 GB GPU). The config sets `force_bos` (the -it tokenizer adds
+no BOS of its own) and `host_embeddings` (Gemma 4 E2B's 4.4 GiB per-layer embedding table
+stays in host memory), so it trains on one GPU, not under `NGPU` > 1. Serving fits a
+24 GiB card; training took about 3 h on one 96 GB RTX PRO 6000 and spilled out of an RTX
+3090's memory. `training/run_recipe.sh` does not run `teacher31b`. g4 scored 183/231 on
+JevBench against v19's 168, but missed its BoardgameQA floor, so v19 stays the reference.
 
 The steps, each with its command, are in [steps.md](steps.md):
 [1. Build the corpora](steps.md#1-build-the-corpora),

@@ -29,7 +29,8 @@ every generated row the recipes train on is committed as the exact file used. Th
 paraphrases are in `data/generators/gen_paraphrases/paraphrases.jsonl`. Everything else is in
 `data/synthetic/`: the generated document questions (v16, v18), the answer-adequacy items (v19), the
 instruction-flip pairs (v20), the frozen Qwen3.5-4B's distributions on the short-task
-corpus and the multi-step rows, and v14's replay distributions — about 47 MB. The raw
+corpus and the multi-step rows, v14's replay distributions, and gemma-4-31B-it's
+distributions on the short-task, generated and adequacy rows (g4) — about 51 MB. The raw
 generator output behind them, every verifier answer included, is in `data/generators/gen_*/`,
 and `recipe.sh` records the commands that turned one into the other. The rebuild from
 the raw exports is not byte-identical today, which is why the processed files are
@@ -98,6 +99,13 @@ Yelp data, and `distill` never kept them, so its output is the same. v12
 (`configs/experiments/v12.yaml`) trained on the full file; to rebuild it, run
 `python -m strands_decider.data.teacher` with the command in that config. Whether this `data/train_v5.jsonl` is byte-identical to
 the original v5 file is not verified, because no hash of the original file was recorded.
+
+The committed 31B teacher files (`teacher_gemma4-31b-it_*.jsonl`, g4) align by row index
+with `data/train_v5.jsonl` and with the generated and adequacy files of the same name. The
+short-task file was labelled on the same 91,408 rows and published without the same 21,000
+`score` rows, leaving the 70,408 rows of the 4B file. g4 trains its rating-scale rows on
+gold alone, so `teacher31b` gives the same `data/teacher_g4.jsonl` from the committed files
+as from the full labels.
 
 The committed `generated_v16.jsonl`, `generated_v16_eval.jsonl` and
 `teacher_v5_qwen35-4b.jsonl` use CRLF line endings. The other committed files use LF.

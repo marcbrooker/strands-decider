@@ -26,8 +26,8 @@
 # `parent` always writes checkpoints/hobson-2b-recipe-parent, where `replay` reads it, and
 # `train` always writes to $CKPT, whatever the configs say.
 # Usage: training/recipe.sh STEP [STEP ...], each one of
-#   build fetch multistep generated adequacy catchall teacher distill parent replay train
-#   calibrate eval all
+#   build fetch multistep generated adequacy catchall teacher teacher31b distill parent
+#   replay train calibrate eval all
 #
 # Synthetic data is committed; public data is not. data/synthetic/ holds every generated
 # row and every model-produced label the recipes train on, as the exact files used: the
@@ -42,6 +42,14 @@
 #   TRAIN_CONFIG=configs/experiments/v20.yaml CKPT=checkpoints/hobson-2b-v20-retrain \
 #     training/recipe.sh train calibrate eval
 # `distill` uses the committed teacher and replay labels, so no parent is trained.
+#
+# Training g4 (configs/experiments/g4.yaml: a Gemma 4 E2B torso toward gemma-4-31B-it's
+# distributions; research/preregistrations/PREREGISTRATION-g4.md) from the repo:
+#   training/recipe.sh build fetch multistep generated adequacy teacher31b
+#   TRAIN_CONFIG=configs/experiments/g4.yaml CKPT=checkpoints/hobson-e2b-g4-retrain \
+#     training/recipe.sh train calibrate eval
+# `teacher31b` uses the committed 31B labels, so no 31B model is loaded unless RELABEL=1.
+# g4 trains on one GPU (host_embeddings), not under NGPU > 1.
 # NGPU=8 uses eight GPUs: teacher and replay one shard per GPU, then a merge; parent and
 # train under torchrun (training/README.md#training-on-several-gpus). PARENT_CONFIG and TRAIN_CONFIG
 # replace the two training configs.
@@ -174,6 +182,28 @@ distill() {
     --append data/replay_v14_multistep.jsonl --out data/teacher_v20.jsonl
 }
 
+# g4's teacher file: gemma-4-31B-it's committed distributions on the short-task, generated
+# and adequacy rows, plus v14's replay distributions on the multi-step rows, merged into
+# data/teacher_g4.jsonl without the rating-scale rows (training/merge_teacher_g4.py).
+# RELABEL=1 relabels with the 31B model instead (~2 h on one 96 GB GPU, 62 GB of weights).
+TEACHER31B_REV=842da3794eaa0b77d5f08bae87a17459d91ff475
+teacher31b() {
+  local f
+  verify data/train_v5.jsonl data/multistep_v14.jsonl data/synthetic/replay_v14_multistep.jsonl
+  mkdir -p data/teacher31b
+  cp data/synthetic/replay_v14_multistep.jsonl data/
+  for f in train_v5 generated_v16 generated_v18 adequacy_hs2 adequacy_gen; do
+    if [ "${RELABEL:-0}" = 1 ]; then
+      label strands_decider.data.teacher --src "data/$f.jsonl" --out "data/teacher31b/$f.jsonl" \
+        --model google/gemma-4-31B-it --revision "$TEACHER31B_REV" --max-batch-tokens 16000
+    else
+      verify "data/synthetic/teacher_gemma4-31b-it_$f.jsonl"
+      cp "data/synthetic/teacher_gemma4-31b-it_$f.jsonl" "data/teacher31b/$f.jsonl"
+    fi
+  done
+  "$PY" training/merge_teacher_g4.py --labels-dir data/teacher31b --out data/teacher_g4.jsonl
+}
+
 parent() {
   verify data/train_v5.jsonl data/multistep_v14.jsonl
   fit "$PARENT_CONFIG" --output-dir checkpoints/hobson-2b-recipe-parent
@@ -214,7 +244,7 @@ evaluate() {
 [ $# -gt 0 ] || set -- all
 for STEP in "$@"; do
   case "$STEP" in
-    build|fetch|multistep|generated|adequacy|catchall|teacher|distill|parent|replay|train|calibrate) "$STEP" ;;
+    build|fetch|multistep|generated|adequacy|catchall|teacher|teacher31b|distill|parent|replay|train|calibrate) "$STEP" ;;
     eval) evaluate ;;
     all) build; fetch; multistep; generated; adequacy; teacher; parent; replay; train; calibrate; evaluate ;;
     *) echo "unknown step: $STEP" >&2; exit 2 ;;
