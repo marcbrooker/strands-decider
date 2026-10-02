@@ -19,6 +19,12 @@ Backends (`--backend`, or the environment variable HOBSON_LLM_BACKEND; default o
                   https://bedrock-mantle.{region}.api.aws/v1/chat/completions
                   Auth: a Bedrock API key in AWS_BEARER_TOKEN_BEDROCK. Model ids drop the
                   "-v1:0" suffix. Cost: as bedrock.
+  local           An OpenAI-compatible server you run yourself (vLLM servers behind a LiteLLM
+                  router; see training/aws/scripts/serve-local.sh): the base URL is
+                  $HOBSON_LLM_BASE_URL (default http://127.0.0.1:4000/v1), and the request is
+                  the plain OpenAI shape with none of the OpenRouter-only fields. Auth: a
+                  bearer of $HOBSON_LLM_API_KEY if set, else "local" (vLLM ignores it). No cost
+                  is reported; --price-in / --price-out give an estimate if you want one.
 The region comes from --region, else AWS_REGION, else AWS_DEFAULT_REGION, else us-west-2:
 as of 2026-09 us-east-1 offers neither default (it lists only Qwen3 32B).
 
@@ -44,7 +50,7 @@ import time
 import urllib.error
 import urllib.request
 
-BACKENDS = ("openrouter", "bedrock", "bedrock-mantle")
+BACKENDS = ("openrouter", "bedrock", "bedrock-mantle", "local")
 
 # The models each backend uses when a generator is not given --writer / --verify-models /
 # --checker. The committed exports in data/generators/gen_*/ were all written and verified with the
@@ -65,6 +71,13 @@ DEFAULT_MODELS = {
     "openrouter": {"writer": "qwen/qwen3.6-27b", "verifier": "qwen/qwen3.5-397b-a17b"},
     "bedrock": {"writer": "qwen.qwen3-235b-a22b-2507-v1:0", "verifier": "qwen.qwen3-235b-a22b-2507-v1:0"},
     "bedrock-mantle": {"writer": "qwen.qwen3-235b-a22b-2507", "verifier": "qwen.qwen3-235b-a22b-2507"},
+    # local: served-model-names that serve-local.sh registers with the LiteLLM router. The
+    # generators pass --writer / --verify-models explicitly (two verifiers: a comma-separated
+    # list), so these are only the fallback defaults. serve-local.sh currently maps:
+    #   local-writer      -> google/gemma-4-12B-it      (writer)
+    #   local-verifier-1  -> google/gemma-4-26B-A4B-it  (verifier, MoE)
+    #   local-verifier-2  -> google/gemma-4-31B-it      (verifier, the distillation teacher)
+    "local": {"writer": "local-writer", "verifier": "local-verifier-1"},
 }
 
 # Per-model defaults for the Bedrock models. A generator's --writer-max-tokens /
@@ -89,6 +102,11 @@ MODELS = {
     "qwen.qwen3-235b-a22b-2507": {"max_tokens": 8000, "reasoning": False},
     "qwen.qwen3-next-80b-a3b": {"max_tokens": 8000, "reasoning": False},
     "qwen.qwen3-next-80b-a3b-instruct": {"max_tokens": 8000, "reasoning": False},
+    # local served-model-names (serve-local.sh). The Gemma-4 instruct models are not thinking
+    # models, so reasoning_effort is dropped for them; 8192 fits under the 16384 vLLM window.
+    "local-writer": {"max_tokens": 8192, "reasoning": False},
+    "local-verifier-1": {"max_tokens": 8192, "reasoning": False},
+    "local-verifier-2": {"max_tokens": 8192, "reasoning": False},
 }
 
 _INLINE_REASONING = re.compile(r"\A\s*<reasoning>.*?</reasoning>", re.S)
@@ -132,7 +150,12 @@ def describe(args, models: dict) -> str:
     recorded = DEFAULT_MODELS["openrouter"]
     same = args.backend == "openrouter" and all(
         set(m.split(",")) <= {recorded["writer"], recorded["verifier"]} for m in models.values())
-    where = args.backend + ("" if args.backend == "openrouter" else f" ({args.region})")
+    if args.backend == "openrouter":
+        where = "openrouter"
+    elif args.backend == "local":
+        where = f"local ({local_base(args)})"
+    else:
+        where = f"{args.backend} ({args.region})"
     line = f"backend {where}: " + ", ".join(f"{k} {v}" for k, v in models.items())
     if not same:
         line += (f". NOTE: these are not the models that produced the committed data "
@@ -148,6 +171,8 @@ def cost_note(args) -> str:
 
 def check_credentials(args) -> None:
     """Exit with one line if the chosen backend cannot authenticate."""
+    if args.backend == "local":
+        return  # a local server takes any bearer; HOBSON_LLM_API_KEY if it wants one
     if args.backend == "openrouter":
         if not os.environ.get("OPENROUTER_API_KEY"):
             raise SystemExit("set OPENROUTER_API_KEY")
@@ -170,11 +195,19 @@ def check_credentials(args) -> None:
 
 _OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 API_URL = _OPENROUTER_URL  # kept for readers of the old name
+_LOCAL_BASE_DEFAULT = "http://127.0.0.1:4000/v1"
+
+
+def local_base(args) -> str:
+    """The base URL of the local OpenAI-compatible server, without a trailing slash."""
+    return (os.environ.get("HOBSON_LLM_BASE_URL") or _LOCAL_BASE_DEFAULT).rstrip("/")
 
 
 def url_for(args) -> str:
     if args.backend == "openrouter":
         return _OPENROUTER_URL
+    if args.backend == "local":
+        return f"{local_base(args)}/chat/completions"
     if args.backend == "bedrock":
         return f"https://bedrock-runtime.{args.region}.amazonaws.com/openai/v1/chat/completions"
     return f"https://bedrock-mantle.{args.region}.api.aws/v1/chat/completions"
@@ -210,6 +243,9 @@ def _headers(args, url: str, data: bytes) -> dict:
     if args.backend == "openrouter":
         headers["Authorization"] = f"Bearer {os.environ['OPENROUTER_API_KEY']}"
         headers["X-Title"] = "hobson-gen-pilot"
+        return headers
+    if args.backend == "local":
+        headers["Authorization"] = f"Bearer {os.environ.get('HOBSON_LLM_API_KEY', 'local')}"
         return headers
     key = os.environ.get("AWS_BEARER_TOKEN_BEDROCK")
     if key or args.backend == "bedrock-mantle":
@@ -255,7 +291,12 @@ def chat(args, model: str, system: str, prompt: str, max_tokens: int,
                 raise Truncated(f"output truncated at max_tokens={max_tokens}")
             if not text:
                 raise RuntimeError("empty content")
-            provider = resp.get("provider", "?") if args.backend == "openrouter" else f"{args.backend}:{args.region}"
+            if args.backend == "openrouter":
+                provider = resp.get("provider", "?")
+            elif args.backend == "local":
+                provider = f"local:{local_base(args)}"
+            else:
+                provider = f"{args.backend}:{args.region}"
             return text, provider
         except Truncated:
             raise

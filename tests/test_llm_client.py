@@ -265,6 +265,58 @@ def test_region_falls_back_to_us_west_2(monkeypatch):
     assert llm._with_defaults(argparse.Namespace()).region == "us-west-2"
 
 
+# ---- local (an OpenAI-compatible server you run) ----------------------------------------
+
+def local_reply():
+    return {"choices": [{"message": {"content": "ANSWER: yes"}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 1000, "completion_tokens": 500}}
+
+
+def test_local_request_is_plain_openai(transport, monkeypatch):
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.delenv("HOBSON_LLM_BASE_URL", raising=False)
+    monkeypatch.delenv("HOBSON_LLM_API_KEY", raising=False)
+    transport.replies.append(local_reply())
+    a = args(backend="local", region="us-west-2", price_in=0.0, price_out=0.0)
+    text, provider = llm.chat(a, "local-writer", "sys", "hi", 8192, 0.7)
+    assert text == "ANSWER: yes"
+    assert provider == "local:http://127.0.0.1:4000/v1"  # default base, no region
+    url, headers, body = transport.sent[0]
+    assert url == "http://127.0.0.1:4000/v1/chat/completions"
+    assert headers["Authorization"] == "Bearer local"  # no key set -> the dummy vLLM ignores
+    assert "X-title" not in headers
+    # the plain OpenAI shape: none of the OpenRouter-only fields, and no reasoning_effort
+    # (local-writer is a non-thinking model in the MODELS table)
+    assert body == {"model": "local-writer", "max_tokens": 8192, "temperature": 0.7, "top_p": 0.95,
+                    "messages": [{"role": "system", "content": "sys"}, {"role": "user", "content": "hi"}]}
+    for k in ("usage", "provider", "reasoning", "reasoning_effort"):
+        assert k not in body
+    assert llm.USAGE == {"in": 1000, "out": 500, "calls": 1, "cost": 0.0}
+
+
+def test_local_honours_base_url_and_api_key(transport, monkeypatch):
+    monkeypatch.setenv("HOBSON_LLM_BASE_URL", "http://10.0.0.5:4000/v1/")  # trailing slash trimmed
+    monkeypatch.setenv("HOBSON_LLM_API_KEY", "sk-local")
+    transport.replies.append(local_reply())
+    a = args(backend="local", region="us-west-2", price_in=0.0, price_out=0.0)
+    _, provider = llm.chat(a, "local-verifier-1", "s", "p", 8192, 0.0)
+    url, headers, _ = transport.sent[0]
+    assert url == "http://10.0.0.5:4000/v1/chat/completions"
+    assert headers["Authorization"] == "Bearer sk-local"
+    assert provider == "local:http://10.0.0.5:4000/v1"
+
+
+def test_local_defaults_credentials_and_describe(monkeypatch):
+    monkeypatch.delenv("HOBSON_LLM_BASE_URL", raising=False)
+    assert llm.default_model(args(backend="local"), "writer") == "local-writer"
+    assert llm.default_model(args(backend="local"), "verifier") == "local-verifier-1"
+    assert llm.default_model(args(backend="local"), "checker") == "local-verifier-1"
+    llm.check_credentials(args(backend="local"))  # a no-op, raises nothing
+    line = llm.describe(args(backend="local"), {"writer": "local-writer", "verifiers": "local-verifier-1,local-verifier-2"})
+    assert line.startswith("backend local (http://127.0.0.1:4000/v1): writer local-writer")
+    assert "NOTE" in line  # not the recorded OpenRouter models
+
+
 # ---- a generator end to end, offline ------------------------------------------------------
 
 def test_flips_generator_records_backend_model_and_provider(transport, monkeypatch, tmp_path):
