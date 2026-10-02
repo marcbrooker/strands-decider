@@ -56,6 +56,12 @@ def test_v19_seed1_is_v19_except_seed_and_output_dir():
     assert _differing_keys(seed1, v19) == {"seed", "output_dir"}
 
 
+def test_g4_e4b_is_g4_except_torso_and_output_dir():
+    e4b, g4 = _load("configs", "experiments", "g4-e4b.yaml"), _load("configs", "experiments", "g4.yaml")
+    assert _differing_keys(e4b, g4) == {"base_model", "output_dir"}
+    assert e4b["base_model"] == "google/gemma-4-E4B-it"
+
+
 def test_v19_saved_configs_load():
     StrandsDeciderConfig.from_json(os.path.join(FIXTURE, "hobson_config.json"))
     saved = dataclasses.asdict(TrainConfig.from_yaml(os.path.join(FIXTURE, "train_config.json")))
