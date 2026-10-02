@@ -32,8 +32,11 @@ e = d.datetime.fromisoformat(sys.argv[1].replace("Z", "+00:00")).astimezone(d.ti
 print((e - d.timedelta(minutes=30)).strftime("%Y-%m-%dT%H:%M:%SZ"))' "$end")}"
 ami=$(aws ssm get-parameter --region "$REGION" --name "$AMI_PARAM" --query Parameter.Value --output text)
 sg=$(ensure_sg "$REGION")
-subnet=$(aws ec2 describe-subnets --region "$REGION" --filters "Name=availability-zone,Values=$az" Name=default-for-az,Values=true \
+[[ "$sg" == sg-* ]] || die "no security group in $REGION (no default VPC? see ensure-vpc.sh and HOBSON_VPC)"
+if [[ -n "${HOBSON_VPC:-}" ]]; then snf="Name=vpc-id,Values=$HOBSON_VPC"; else snf=Name=default-for-az,Values=true; fi
+subnet=$(aws ec2 describe-subnets --region "$REGION" --filters "Name=availability-zone,Values=$az" "$snf" \
   --query 'Subnets[0].SubnetId' --output text)
+[[ "$subnet" == subnet-* ]] || die "no subnet in $az (HOBSON_VPC=${HOBSON_VPC:-default VPC}; ensure-vpc.sh with AZS=$az)"
 log "cr=$CR_ID $shape $REGION/$az ami=$ami subnet=$subnet sg=$sg shutdown-at=$SHUTDOWN_AT"
 
 while :; do
