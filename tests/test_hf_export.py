@@ -495,6 +495,7 @@ def test_a_gemma_checkpoint_is_described_as_gemma(tmp_path):
         assert "google/gemma-4-31B-it" in text and "Qwen" not in text
     assert "Gemma4ForConditionalGeneration" in readme and "v19 reference" not in readme
     assert "Output of this checkpoint:\n\n```\nx\n```\n\nOr serve it" in readme
+    assert f'pip install "strands-decider @ git+{hf_export.REPO_URL}@feat/gemma4-torso"' in readme
     hf_export.verify(str(out))
 
 

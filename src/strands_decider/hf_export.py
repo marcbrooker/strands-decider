@@ -76,6 +76,11 @@ class Base:
     example: str  # the card's `strands-decider ask` output, from a named checkpoint
     teacher_route: str  # how the teacher's distributions reach the model
     retrain: str  # the card's "To retrain" paragraph
+    trained_by: str  # the card's "Trained by" paragraph: {host} {gpu} {wall} {train}
+    # False: no strands-decider release loads this base yet, so the card installs the code
+    # from `--repo-url` at `source_ref`.
+    released: bool = True
+    source_ref: str = "main"
 
 
 QWEN = Base(
@@ -105,6 +110,10 @@ score_0 score = 1.10 (confidence 0.519)
     retrain="""To retrain, run the same recipe on a Linux or WSL2 host with NVIDIA GPUs: about 11 hours
 on one RTX 3090, or about 1 h 10 min on eight H100s with `NGPU=8 FAST=1` through the AWS
 runner.""",
+    trained_by="""Trained by `training/recipe.sh all` of the code repository on a `{host}`
+host ({gpu}): recipe wall clock {wall} s, training stage
+{train} s. Stage timings: `training/stages.jsonl`; data hashes:
+`training/data_sha256.txt`; configs: `train_config.json`, `training/configs/`.""",
 )
 GEMMA4_E2B = Base(
     model="google/gemma-4-E2B-it",
@@ -122,6 +131,13 @@ GEMMA4_E2B = Base(
     retrain="""To retrain, run `configs/experiments/g4.yaml` on one NVIDIA GPU with at least 24 GiB
 free (`training/README.md`, "Training g4"): about 3 h on one RTX PRO 6000 or one H100. The
 31B teacher's labels are committed, so no 31B model is loaded.""",
+    trained_by="""Trained by `training/recipe.sh` of the code repository (`build fetch multistep generated
+adequacy teacher31b`, then `train calibrate eval` with `configs/experiments/g4.yaml`) on one
+GPU of a `{host}` host ({gpu}): wall clock {wall} s for every stage. The run had no
+per-stage timer, so `training/stages.jsonl` holds the whole run as one record. Configs:
+`train_config.json`, `training/configs/`.""",
+    released=False,
+    source_ref="feat/gemma4-torso",
 )
 BASES = {b.model: b for b in (QWEN, GEMMA4_E2B)}
 # Kept for callers that named the original single base.
@@ -444,6 +460,8 @@ def card(name: str, run_id: str, role: str, prov: dict, arms: list[dict],
                      f"| {a['brier']:.3f} | {a['ece']:.3f} | {a['served']} |" for a in arms)
     ints = "\n".join(f"| {k} | {v['accuracy']:.3f} | {v['n']:,} |" for k, v in headline(internal).items())
     model = hub_id or "<this folder>"
+    install = ("pip install strands-decider" if base.released else
+               f'pip install "strands-decider @ git+{repo_url}@{base.source_ref}"')
     # The title is the public name: the Hub repo's, or the export's. The run id stays in
     # the run records.
     title = (hub_id.rsplit("/", 1)[-1] if hub_id else name) + (" (parent)" if role == "parent" else "")
@@ -468,7 +486,7 @@ Apache-2.0 license as this model (see `LICENSE.md`).
 ## Use
 
 ```bash
-pip install strands-decider
+{install}
 ```
 
 Ask one or more questions about a state. Pass `--device cuda`, `mps` or `cpu`; without it,
@@ -545,10 +563,8 @@ and the reproduction contract.
 
 ## Training
 
-Trained by `training/recipe.sh all` of the code repository on a `{prov.get('host_shape')}`
-host ({prov.get('gpu')}): recipe wall clock {prov.get('pipeline_wall_s')} s, training stage
-{prov.get('train_wall_s')} s. Stage timings: `training/stages.jsonl`; data hashes:
-`training/data_sha256.txt`; configs: `train_config.json`, `training/configs/`.
+{base.trained_by.format(host=prov.get('host_shape'), gpu=prov.get('gpu'),
+                        wall=prov.get('pipeline_wall_s'), train=prov.get('train_wall_s'))}
 
 {base.retrain} `training/README.md` has the setup, the stages and the hardware notes.
 
