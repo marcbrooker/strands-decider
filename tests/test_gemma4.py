@@ -3,7 +3,8 @@
 - the frozen option-number readout applies Gemma's final logit soft-cap, so it matches
   the model's own output head;
 - the shared-prefix cache forks sliding-window layers (a prefix longer than the window)
-  and KV-shared layers, and agrees with encoding each full prompt.
+  and KV-shared layers, and agrees with encoding each full prompt;
+- ensure_bos makes a tokenizer that adds no BOS (gemma-4-E2B-it's) add one.
 """
 
 from __future__ import annotations
@@ -92,3 +93,45 @@ def test_shared_prefix_matches_full_prompts(shared):
             input_ids=whole, attention_mask=torch.ones_like(whole), return_dict=True
         ).last_hidden_state
         assert torch.allclose(shared_out[i, : len(s)], ref[0, len(prefix) :], atol=1e-4), i
+
+
+def _word_tokenizer(add_bos: bool):
+    """A tiny fast tokenizer that, like gemma-4-E2B-it's, may add no BOS of its own."""
+    from tokenizers import Tokenizer, models, pre_tokenizers, processors
+
+    vocab = {"<bos>": 0, "<pad>": 1, "[UNK]": 2, "x": 3, "y": 4}
+    core = Tokenizer(models.WordLevel(vocab, unk_token="[UNK]"))
+    core.pre_tokenizer = pre_tokenizers.Whitespace()
+    if add_bos:
+        core.post_processor = processors.TemplateProcessing(
+            single="<bos> $A", pair="<bos> $A $B", special_tokens=[("<bos>", 0)]
+        )
+    return transformers.PreTrainedTokenizerFast(
+        tokenizer_object=core, bos_token="<bos>", pad_token="<pad>", unk_token="[UNK]"
+    )
+
+
+def test_ensure_bos_adds_bos_only_with_special_tokens(tmp_path):
+    from strands_decider.modeling import ensure_bos
+
+    tok = _word_tokenizer(add_bos=False)
+    assert tok("x y")["input_ids"] == [3, 4]
+    ensure_bos(tok)
+    assert tok("x y")["input_ids"] == [0, 3, 4]
+    # Shared-prefix suffixes are encoded without special tokens and must stay BOS-free.
+    assert tok("x y", add_special_tokens=False)["input_ids"] == [3, 4]
+    ensure_bos(tok)  # idempotent
+    assert tok("x y")["input_ids"] == [0, 3, 4]
+    tok.save_pretrained(tmp_path)  # a checkpoint's tokenizer keeps it
+    assert transformers.AutoTokenizer.from_pretrained(tmp_path)("x")["input_ids"] == [0, 3]
+
+
+def test_ensure_bos_leaves_a_bos_adding_tokenizer_alone():
+    from strands_decider.modeling import ensure_bos
+
+    tok = _word_tokenizer(add_bos=True)
+    before = tok.backend_tokenizer.post_processor.__getstate__()
+    ensure_bos(tok)
+    assert tok.backend_tokenizer.post_processor.__getstate__() == before
+    assert tok("x")["input_ids"] == [0, 3]
+    assert StrandsDeciderConfig().force_bos is False  # off unless a config asks for it

@@ -83,6 +83,11 @@ class StrandsDeciderConfig:
             "gate_proj", "up_proj", "down_proj",
         ]
     )
+    # Start every prompt with the tokenizer's BOS token even when its own post-processor
+    # adds none (ensure_bos). gemma-4-E2B-it's tokenizer leaves BOS to its chat template,
+    # and without it the frozen -it torso reads JevBench at chance (73/231, against 135
+    # with it). Off by default, so earlier checkpoints load and retrain unchanged.
+    force_bos: bool = False
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), indent=2)
@@ -91,6 +96,31 @@ class StrandsDeciderConfig:
     def from_json(cls, path: str) -> StrandsDeciderConfig:
         with open(path, encoding="utf-8") as fh:
             return cls(**json.load(fh))
+
+
+def ensure_bos(tok: Any) -> Any:
+    """Make a fast tokenizer prepend its BOS token whenever special tokens are added.
+
+    gemma-4-E2B-it's tokenizer adds none (its chat template writes `<bos>`), while the
+    base model's adds it; Gemma reads text without it badly. Replacing the post-processor
+    keeps `add_special_tokens=False` BOS-free, so a cached prefix's suffixes stay as they
+    were, and it is saved with the tokenizer. A tokenizer that already adds BOS, or has
+    none, is left alone.
+    """
+    bos, bos_id = tok.bos_token, tok.bos_token_id
+    if bos is None or bos_id is None:
+        return tok
+    ids = tok("x")["input_ids"]
+    if ids and ids[0] == bos_id:
+        return tok
+    from tokenizers import processors
+
+    tok.backend_tokenizer.post_processor = processors.TemplateProcessing(
+        single=f"{bos} $A", pair=f"{bos} $A $B", special_tokens=[(bos, bos_id)]
+    )
+    if tok("x")["input_ids"][0] != bos_id:
+        raise RuntimeError("ensure_bos: the tokenizer still adds no BOS")
+    return tok
 
 
 class SlotHead(nn.Module):
@@ -265,6 +295,8 @@ class StrandsDeciderModel(nn.Module):
         tok = AutoTokenizer.from_pretrained(config.base_model)
         if tok.pad_token is None:
             tok.pad_token = tok.eos_token
+        if config.force_bos:
+            ensure_bos(tok)
 
         torso = cls._load_torso(config, device_map, attn_implementation)
         model = cls(config, torso, tok)
@@ -531,6 +563,8 @@ class StrandsDeciderModel(nn.Module):
         tok = AutoTokenizer.from_pretrained(path)
         if tok.pad_token is None:
             tok.pad_token = tok.eos_token
+        if config.force_bos:  # saved with the tokenizer; this only guards a lossy save
+            ensure_bos(tok)
 
         torso = cls._load_torso(config, device_map, attn_implementation)
 

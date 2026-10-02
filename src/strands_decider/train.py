@@ -54,6 +54,9 @@ class TrainConfig:
     # such as Qwen3.5 needs its recurrent layers' projections listed too, or LoRA reaches
     # only its few full-attention layers.
     lora_targets: list[str] | None = None
+    # Start every prompt with BOS even if the tokenizer adds none (modeling.ensure_bos);
+    # gemma-4-E2B-it's tokenizer leaves it to the chat template.
+    force_bos: bool = False
     freeze_torso: bool = False
     # "lm_head" seeds the slot head from the LM's own option-number readout rather
     # than at random. Measured teacher quality for that readout on JevBench is
@@ -283,6 +286,7 @@ def train(cfg: TrainConfig) -> str:
         use_lora=cfg.use_lora and not cfg.freeze_torso,
         lora_r=cfg.lora_r,
         lora_alpha=cfg.lora_alpha,
+        force_bos=cfg.force_bos,
         # Serving needs this to correct the variance floor smoothing imposes on
         # score confidence; without it a score could never reach high confidence.
         ordinal_smoothing=cfg.ordinal_smoothing,
