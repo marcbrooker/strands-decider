@@ -29,6 +29,8 @@ script also runs on its own:
 | [`jevbench/jevbench.sh`](jevbench/jevbench.sh) | The JevBench public set against `strands-decider serve` on one GPU, at the JevBench commit the script pins |
 | [`jevbench/paired.py`](jevbench/paired.py) | A per-task comparison of two JevBench runs, with an exact McNemar test |
 | [`jevbench/jevbench_cold_warm.py`](jevbench/jevbench_cold_warm.py) | First-request against warm latency, one task asked twice (MPS) |
+| [`jf100_run.py`](jf100_run.py) | JF100 (100 items in three option rotations) against `strands-decider serve`, with upstream's own payloads and scorer, compared item by item with Jev 1.13.0 |
+| [`typed_decisions.py`](typed_decisions.py) | Typed Decisions `test` (400 cases, 2,000 decisions) zero-shot against `strands-decider serve`: accuracy, KL from gold, Brier and ECE, by primitive and workflow |
 
 Paths are relative to the repository root unless they are links. A module path such as
 `infer.py` is relative to `src/strands_decider/`.
